@@ -1,0 +1,8 @@
+roms/
+bin/
+logs/
+
+gba_bios.bin
+
+dogbark
+dogbark.exe
