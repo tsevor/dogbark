@@ -20,5 +20,5 @@ typedef struct Cart {
 bool cart_init(Cart *cart, char *filename);
 void cart_free(Cart *cart);
 
-uint8_t cart_read(Cart *cart, uint32_t addr);
+uint32_t cart_read(Cart *cart, uint32_t addr);
 void cart_write(Cart *cart, uint32_t addr, uint8_t val);

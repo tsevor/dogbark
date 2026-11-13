@@ -22,15 +22,8 @@ bool cart_init(Cart *cart, char *filename) {
 	fseek(file, 0, SEEK_END);
 	cart->rom_size = ftell(file);
 
-	if (cart->rom_size < 0x8000) {
-		// less than minimum
-		lerror("cart: file too small\n");
-		fclose(file);
-		return false;
-	}
-
 	// load full rom
-	ldeb1("cart: rom size: %d\n", (int)cart->rom_size);
+	ldeb1("cart: rom:  0x%x\n", (int)cart->rom_size);
 
 	cart->rom = calloc(cart->rom_size, 1);
 	fseek(file, 0, SEEK_SET);
@@ -44,7 +37,7 @@ bool cart_init(Cart *cart, char *filename) {
 	// no easy way to detect, assume max
 	cart->sram_size = 32 << 10; // 32kb
 	cart->sram = calloc(cart->sram_size, 1);
-	ldeb1("cart: sram size: %d\n", cart->sram_size);
+	ldeb1("cart: sram: 0x%x\n", cart->sram_size);
 
 	size_t len = strlen(cart->filename);
 	int dot = len;
@@ -88,16 +81,17 @@ void cart_free(Cart *cart) {
 			lerror("cart: save file failed to write\n");
 		}
 #endif
+		free(cart->savefile);
 		free(cart->sram);
 	}
 }
 
-uint8_t cart_read(Cart *cart, uint32_t addr) {
+uint32_t cart_read(Cart *cart, uint32_t addr) {
 	uint8_t wait_state = (addr & 0x06000000) >> 25;
 	addr = addr & 0x00ffffff;
 	if (wait_state < 3) { // rom
 		if (addr < cart->rom_size) {
-			return cart->rom[addr];
+			return *(uint32_t*)(cart->rom + addr);
 		}
 	} else { // sram
 		if (addr < cart->sram_size) {
