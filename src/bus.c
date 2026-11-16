@@ -15,7 +15,10 @@ void bus_free(Bus *bus) {
 }
 
 void bus_clock(Bus *bus) {
-	bus->vblank_started = true; // force for now
+	if (bus->cycles++ == 16000000) {
+		bus->cycles = 0;
+		bus->vblank_started = true; // force for now
+	}
 }
 
 void bus_reset(Bus *bus) {
@@ -54,25 +57,123 @@ void bus_reset(Bus *bus) {
 
 //   10000000-FFFFFFFF   Not used (upper 4bits of address bus unused)
 
-uint32_t bus_read(Bus *bus, uint32_t addr) {
-	switch (addr) {
-		case 0x00000000 ... 0x00003fff:
-			return *(uint32_t*)(bus->bios + addr);
-		case 0x08000000 ... 0x0fffffff:
+uint8_t bus_read8(Bus *bus, uint32_t addr) {
+	uint8_t region = addr >> 24;
+	switch (region) {
+		case 0x00:
+			if (addr < 0x4000) return bus->bios[addr];
+			return 0;
+		case 0x02:
+			return bus->ewram[addr & 0x3ffff];
+		case 0x03:
+			return bus->iwram[addr & 0x7fff];
+		case 0x08 ... 0x0d: {
+			uint32_t rom_addr = addr & 0x01ffffff;
+			if (rom_addr < bus->cart->rom_size) return bus->cart->rom[rom_addr];
+			return 0;
+		}
+		case 0x0e: case 0x0f:
 			return cart_read(bus->cart, addr);
 		default:
-			ldeb1("bus_read: unmapped: 0x%08x\n", addr);
 			return 0;
 	}
 }
 
-void bus_write(Bus *bus, uint32_t addr, uint32_t val) {
-	switch (addr) {
-		case 0x08000000 ... 0x0fffffff:
+uint16_t bus_read16(Bus *bus, uint32_t addr) {
+	uint32_t aligned = addr & ~1;
+	uint8_t region = addr >> 24;
+	switch (region) {
+		case 0x00:
+			if (aligned < 0x4000) return *(uint16_t*)(bus->bios + aligned);
+			return 0;
+		case 0x02:
+			return *(uint16_t*)(bus->ewram + (aligned & 0x3ffff));
+		case 0x03:
+			return *(uint16_t*)(bus->iwram + (aligned & 0x7fff));
+		case 0x08 ... 0x0d: {
+			uint32_t rom_addr = aligned & 0x01ffffff;
+			if (rom_addr + 1 < bus->cart->rom_size) return *(uint16_t*)(bus->cart->rom + rom_addr);
+			return 0;
+		}
+		default:
+			return 0;
+	}
+}
+
+uint32_t bus_read32(Bus *bus, uint32_t addr) {
+	uint32_t aligned = addr & ~3;
+	uint32_t val = 0;
+	uint8_t region = addr >> 24;
+	switch (region) {
+		case 0x00:
+			if (aligned < 0x4000) val = *(uint32_t*)(bus->bios + aligned);
+			break;
+		case 0x02:
+			val = *(uint32_t*)(bus->ewram + (aligned & 0x3ffff));
+			break;
+		case 0x03:
+			val = *(uint32_t*)(bus->iwram + (aligned & 0x7fff));
+			break;
+		case 0x08 ... 0x0d: {
+			uint32_t rom_addr = aligned & 0x01ffffff;
+			if (rom_addr + 3 < bus->cart->rom_size) val = *(uint32_t*)(bus->cart->rom + rom_addr);
+			break;
+		}
+		default:
+			break;
+	}
+
+	uint32_t roll = (addr & 3) << 3;
+	if (roll) val = (val >> roll) | (val << (32 - roll));
+	return val;
+}
+
+void bus_write8(Bus *bus, uint32_t addr, uint8_t val) {
+	uint8_t region = addr >> 24;
+	switch (region) {
+		case 0x02:
+			bus->ewram[addr & 0x3ffff] = val;
+			break;
+		case 0x03:
+			bus->iwram[addr & 0x7fff] = val;
+			break;
+		case 0x0e: case 0x0f:
 			cart_write(bus->cart, addr, val);
 			break;
 		default:
-			ldeb1("bus_write: unmapped: 0x%08x\n", addr);
+			ldeb1("bus_write8: unmapped: 0x%08x: %02x\n", addr, val);
+			break;
+	}
+}
+
+void bus_write16(Bus *bus, uint32_t addr, uint16_t val) {
+	uint32_t aligned = addr & ~1;
+	uint8_t region = addr >> 24;
+	switch (region) {
+		case 0x02:
+			*(uint16_t*)(bus->ewram + (aligned & 0x3ffff)) = val;
+			break;
+		case 0x03:
+			*(uint16_t*)(bus->iwram + (aligned & 0x7fff)) = val;
+			break;
+		default:
+			ldeb1("bus_write16: unmapped: 0x%08x: %04x\n", addr, val);
+			break;
+	}
+}
+
+void bus_write32(Bus *bus, uint32_t addr, uint32_t val) {
+	uint32_t aligned = addr & ~3;
+	uint8_t region = addr >> 24;
+	switch (region) {
+		case 0x02:
+			*(uint32_t*)(bus->ewram + (aligned & 0x3ffff)) = val;
+			break;
+		case 0x03:
+			*(uint32_t*)(bus->iwram + (aligned & 0x7fff)) = val;
+			break;
+		default:
+			ldeb1("bus_write32: unmapped: 0x%08x: %08x\n", addr, val);
 			break;
 	}
 }

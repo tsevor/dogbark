@@ -14,6 +14,8 @@ typedef struct Bus {
 
 	bool vblank_started;
 
+	uint64_t cycles;
+
 	Cart *cart;
 	CPU *cpu;
 } Bus;
@@ -25,7 +27,12 @@ void bus_reset(Bus *bus);
 
 void bus_clock(Bus *bus);
 
-uint32_t bus_read(Bus *bus, uint32_t addr);
-void bus_write(Bus *bus, uint32_t addr, uint32_t val);
+uint8_t bus_read8(Bus *bus, uint32_t addr);
+uint16_t bus_read16(Bus *bus, uint32_t addr);
+uint32_t bus_read32(Bus *bus, uint32_t addr);
+void bus_write8(Bus *bus, uint32_t addr, uint8_t val);
+void bus_write16(Bus *bus, uint32_t addr, uint16_t val);
+void bus_write32(Bus *bus, uint32_t addr, uint32_t val);
+
 
 #include "cpu.h"

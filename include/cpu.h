@@ -19,13 +19,19 @@ typedef struct CPU {
 	union {
 		uint32_t regs[16];
 		struct {
-			uint32_t r[13];
+			uint32_t _pad[13];
 			uint32_t sp;
 			uint32_t lr;
 			uint32_t pc;
 		};
 	};
-	uint32_t regs_bak[16];
+
+	uint32_t banked_r13[6];
+	uint32_t banked_r14[6];
+	uint32_t banked_spsr[6];
+	uint32_t usr_r8_12[5];
+	uint32_t fiq_r8_12[5];
+	uint32_t spsr;
 
 	union {
 		uint32_t cpsr;
@@ -44,22 +50,6 @@ typedef struct CPU {
 		};
 	};
 
-	union {
-		uint32_t spsr;
-		struct {
-			OperatingMode s_mode : 5;
-			uint32_t s_t : 1; // 0=arm, 1=thumb
-			uint32_t s_f : 1; // fiq disable
-			uint32_t s_i : 1; // irq disable
-			uint32_t : 16;    // reserved + 2 arm11 only
-			uint32_t : 3;     // reserved + j flag
-			uint32_t s_q : 1; // sticky overflow
-			uint32_t s_v : 1; // overflow flag
-			uint32_t s_c : 1; // carry flag
-			uint32_t s_z : 1; // zero flag
-			uint32_t s_n : 1; // sign flag
-		};
-	};
 
 
 	Bus *bus;
