@@ -247,10 +247,11 @@ void op_dp_cmp(CPU *cpu, uint32_t op1, uint32_t op2) {
 }
 
 void op_dp_cmn(CPU *cpu, uint32_t op1, uint32_t op2) {
-	uint32_t res = op1 + op2;
+	uint64_t res64 = (uint64_t)op1 + (uint64_t)op2;
+	uint32_t res = (uint32_t)res64;
 	set_nz_flags(cpu, res);
-	cpu->c = (op1 < op2);
-	cpu->v = (((op1 ^ op2) & (op1 ^ res)) & 0x80000000) != 0;
+	cpu->c = (res64 >> 32) & 1;
+	cpu->v = (~(op1 ^ op2) & (op1 ^ res)) & 0x80000000;
 }
 
 void op_dp_teq(CPU *cpu, uint32_t op1, uint32_t op2, bool shifter_carry) {
@@ -339,7 +340,7 @@ void op_dp_adc(CPU *cpu, uint8_t rd, uint32_t op1, uint32_t op2, bool s) {
 void op_dp_sub(CPU *cpu, uint8_t rd, uint32_t op1, uint32_t op2, bool s) {
 	uint64_t res64 = (uint64_t)op1 + (uint64_t)(~op2) + 1;
 	uint32_t res = (uint32_t)res64;
-	bool c = (res64 >> 32) & 1; // ARM uses Carry as NOT Borrow
+	bool c = (res64 >> 32) & 1;
 	bool v = ((op1 ^ op2) & (op1 ^ res)) & 0x80000000;
 	dp_write_arithmetic_res(cpu, rd, res, s, c, v);
 }
@@ -403,7 +404,7 @@ void op_arm_dataproc(CPU *cpu, uint32_t opcode) {
 		case 0xc: op_dp_orr(cpu, rd, op1, op2, s, carry); break;
 		case 0xd: op_dp_mov(cpu, rd, op2, s, carry);      break;
 		case 0xe: op_dp_bic(cpu, rd, op1, op2, s, carry); break;
-		case 0xf: op_dp_mvn(cpu, rd, ~op2, s, carry);     break;
+		case 0xf: op_dp_mvn(cpu, rd, op2, s, carry);      break;
 	}
 }
 
@@ -415,17 +416,62 @@ void op_arm_transswp12(CPU *cpu, uint32_t opcode) {
 }
 
 void op_arm_mullong(CPU *cpu, uint32_t opcode) {
-	(void)cpu;
-	(void)opcode;
-	lerror("op_arm_mullong is unimplemented\n");
-	exit(1);
+	bool u = (opcode >> 22) & 1;
+	bool a = (opcode >> 21) & 1;
+	bool s = (opcode >> 20) & 1;
+
+	uint8_t rdhi = (opcode >> 16) & 0xf;
+	uint8_t rdlo = (opcode >> 12) & 0xf;
+	uint8_t rs = (opcode >> 8) & 0xf;
+	uint8_t rm = opcode & 0xf;
+
+	uint64_t res;
+
+	if (!u) {
+		// unsigned: umull / umlal
+		res = (uint64_t)cpu->regs[rm] * (uint64_t)cpu->regs[rs];
+		if (a) {
+			uint64_t acc = ((uint64_t)cpu->regs[rdhi] << 32) | (uint64_t)cpu->regs[rdlo];
+			res += acc;
+		}
+	} else {
+		// signed: smull / smlal
+		int64_t sres = (int64_t)(int32_t)cpu->regs[rm] * (int64_t)(int32_t)cpu->regs[rs];
+		if (a) {
+			int64_t acc = (int64_t)(((uint64_t)cpu->regs[rdhi] << 32) | (uint64_t)cpu->regs[rdlo]);
+			sres += acc;
+		}
+		res = (uint64_t)sres;
+	}
+
+	cpu->regs[rdlo] = (uint32_t)res;
+	cpu->regs[rdhi] = (uint32_t)(res >> 32);
+
+	if (s) {
+		cpu->n = (res >> 63) & 1;
+		cpu->z = (res == 0);
+	}
 }
 
 void op_arm_multiply(CPU *cpu, uint32_t opcode) {
-	(void)cpu;
-	(void)opcode;
-	lerror("op_arm_multiply is unimplemented\n");
-	exit(1);
+	bool a = (opcode >> 21) & 1;
+	bool s = (opcode >> 20) & 1;
+
+	uint8_t rd = (opcode >> 16) & 0xf;
+	uint8_t rn = (opcode >> 12) & 0xf;
+	uint8_t rs = (opcode >> 8) & 0xf;
+	uint8_t rm = opcode & 0xf;
+
+	uint32_t res = cpu->regs[rm] * cpu->regs[rs];
+	if (a) {
+		res += cpu->regs[rn];
+	}
+
+	cpu->regs[rd] = res;
+
+	if (s) {
+		set_nz_flags(cpu, res);
+	}
 }
 
 void op_arm_transimm10(CPU *cpu, uint32_t opcode) {
@@ -454,6 +500,9 @@ void op_arm_transimm10(CPU *cpu, uint32_t opcode) {
 		switch (sh) {
 			case 1:
 				data = bus_read16(cpu->bus, addr);
+				if (addr & 1) {
+					data = (data >> 8) | (data << 24);
+				}
 				break;
 			case 2:
 				data = (int32_t)(int8_t)bus_read8(cpu->bus, addr);
@@ -467,6 +516,14 @@ void op_arm_transimm10(CPU *cpu, uint32_t opcode) {
 				break;
 		}
 
+		if ((!p || w) && rn != 15) {
+			if (p) {
+				cpu->regs[rn] = addr;
+			} else {
+				cpu->regs[rn] = base + effective_offset;
+			}
+		}
+
 		cpu->regs[rd] = data;
 
 		if (rd == 15) cpu->pc += (cpu->t ? 2 : 4);
@@ -478,22 +535,85 @@ void op_arm_transimm10(CPU *cpu, uint32_t opcode) {
 		}
 
 		bus_write16(cpu->bus, addr, data & 0xffff);
-	}
 
-	if ((!p || w) && rn != 15) {
-		if (p) {
-			cpu->regs[rn] = addr;
-		} else {
-			cpu->regs[rn] = base + effective_offset;
+		if ((!p || w) && rn != 15) {
+			if (p) {
+				cpu->regs[rn] = addr;
+			} else {
+				cpu->regs[rn] = base + effective_offset;
+			}
 		}
 	}
 }
 
 void op_arm_transreg10(CPU *cpu, uint32_t opcode) {
-	(void)cpu;
-	(void)opcode;
-	lerror("op_arm_transreg10 is unimplemented\n");
-	exit(1);
+	bool p = (opcode >> 24) & 1; // 0 = post-indexed    ; 1 = pre-indexed
+	bool u = (opcode >> 23) & 1; // 0 = subtract offset ; 1 = add offset
+	bool w = (opcode >> 21) & 1; // 0 = no writeback    ; 1 = writeback
+	bool l = (opcode >> 20) & 1; // 0 = store           ; 1 = load
+
+	uint8_t rn = (opcode >> 16) & 0xf;
+	uint8_t rd = (opcode >> 12) & 0xf;
+	uint8_t rm = opcode & 0xf;
+	uint32_t offset = cpu->regs[rm];
+
+	uint8_t sh = (opcode >> 5) & 3;
+
+	uint32_t base = cpu->regs[rn];
+	int32_t effective_offset = u ? (int32_t)offset : -(int32_t)offset;
+
+	uint32_t addr = p ? (base + effective_offset) : base;
+
+	if (l) {
+		uint32_t data = 0;
+
+		switch (sh) {
+			case 1: // LDRH
+				data = bus_read16(cpu->bus, addr);
+				if (addr & 1) {
+					data = (data >> 8) | (data << 24);
+				}
+				break;
+			case 2: // LDRSB
+				data = (int32_t)(int8_t)bus_read8(cpu->bus, addr);
+				break;
+			case 3: // LDRSH
+				if (addr & 1) {
+					data = (int32_t)(int8_t)bus_read8(cpu->bus, addr);
+				} else {
+					data = (int32_t)(int16_t)bus_read16(cpu->bus, addr);
+				}
+				break;
+		}
+
+		if ((!p || w) && rn != 15) {
+			if (p) {
+				cpu->regs[rn] = addr;
+			} else {
+				cpu->regs[rn] = base + effective_offset;
+			}
+		}
+
+		cpu->regs[rd] = data;
+
+		if (rd == 15) cpu->pc += (cpu->t ? 2 : 4);
+	} else {
+		uint32_t data = cpu->regs[rd];
+
+		if (rd == 15) {
+			data += 4;
+		}
+
+		bus_write16(cpu->bus, addr, data & 0xffff);
+
+		if ((!p || w) && rn != 15) {
+			if (p) {
+				cpu->regs[rn] = addr;
+			} else {
+				cpu->regs[rn] = base + effective_offset;
+			}
+		}
+	}
 }
 
 void op_arm_bx(CPU *cpu, uint32_t opcode) {
@@ -608,10 +728,75 @@ void op_arm_transimm9(CPU *cpu, uint32_t opcode) {
 }
 
 void op_arm_transreg9(CPU *cpu, uint32_t opcode) {
-	(void)cpu;
-	(void)opcode;
-	lerror("op_arm_transreg9 is unimplemented\n");
-	exit(1);
+	bool p = (opcode >> 24) & 1; // 0 = post-indexed    ; 1 = pre-indexed
+	bool u = (opcode >> 23) & 1; // 0 = subtract offset ; 1 = add offset
+	bool b = (opcode >> 22) & 1; // 0 = word            ; 1 = byte
+	bool w = (opcode >> 21) & 1; // 0 = no writeback    ; 1 = writeback
+	bool l = (opcode >> 20) & 1; // 0 = store           ; 1 = load
+
+	uint8_t rn = (opcode >> 16) & 0xf;
+	uint8_t rd = (opcode >> 12) & 0xf;
+
+	uint8_t rm = opcode & 0xf;
+	uint32_t val = cpu->regs[rm];
+	uint8_t type = (opcode >> 5) & 0x3;
+	uint32_t shift = (opcode >> 7) & 0x1f;
+	uint32_t offset;
+
+	switch (type) {
+		case 0: // LSL
+			offset = (shift == 0) ? val : (val << shift);
+			break;
+		case 1: // LSR
+			offset = (shift == 0) ? 0 : (val >> shift);
+			break;
+		case 2: // ASR
+			offset = (shift == 0) ? (((int32_t)val < 0) ? 0xffffffff : 0) : (uint32_t)((int32_t)val >> shift);
+			break;
+		case 3: // ROR / RRX
+			offset = (shift == 0) ? ((val >> 1) | ((uint32_t)cpu->c << 31)) : ror(val, shift);
+			break;
+	}
+
+	uint32_t base = cpu->regs[rn];
+	uint32_t addr = base;
+	uint32_t effective_offset = u ? (int32_t)offset : (-(int32_t)offset);
+
+	if (p) addr += effective_offset;
+
+	if (l) {
+		uint32_t data;
+		if (b) {
+			data = bus_read8(cpu->bus, addr);
+		} else {
+			data = bus_read32(cpu->bus, addr);
+		}
+		cpu->regs[rd] = data;
+
+		if (rd == 15) {
+			cpu->pc += (cpu->t ? 2 : 4);
+		}
+	} else {
+		uint32_t data = cpu->regs[rd];
+
+		if (rd == 15) {
+			data += 4;
+		}
+
+		if (b) {
+			bus_write8(cpu->bus, addr, data & 0xff);
+		} else {
+			bus_write32(cpu->bus, addr, data);
+		}
+	}
+
+	if ((!p || w) && rn != 15) {
+		if (p) {
+			cpu->regs[rn] = addr;
+		} else {
+			cpu->regs[rn] = base + effective_offset;
+		}
+	}
 }
 
 void op_arm_blocktrans(CPU *cpu, uint32_t opcode) {
@@ -706,10 +891,18 @@ void op_arm_codatatrans(CPU *cpu, uint32_t opcode) {
 }
 
 void op_arm_swi(CPU *cpu, uint32_t opcode) {
-	(void)cpu;
 	(void)opcode;
-	lerror("op_arm_swi is unimplemented\n");
-	exit(1);
+	uint32_t return_addr = cpu->pc - 4;
+
+	OperatingMode old_mode = cpu->mode;
+	swap_banked_registers(cpu, old_mode, OPMODE_SWI);
+	cpu->spsr = cpu->cpsr;
+	cpu->mode = OPMODE_SWI;
+	cpu->i = 1;
+	cpu->t = 0;
+
+	cpu->lr = return_addr;
+	cpu->pc = 0x00000008 + 4;
 }
 
 void op_arm_coregtrans(CPU *cpu, uint32_t opcode) {
@@ -729,17 +922,15 @@ void op_arm_codataop(CPU *cpu, uint32_t opcode) {
 void op_arm_undefined(CPU *cpu, uint32_t opcode) {
 	lwarn("cpu: hit undefined opcode: 0x%08x\n", opcode);
 	(void)cpu;
+	exit(1);
 }
 
 void cpu_exec_arm(CPU *cpu) {
 	uint32_t opcode = bus_read32(cpu->bus, cpu->pc - 4);
 	cpu->pc += 4;
 	if (!eval_op_arm_cond(cpu, opcode)) {
-		// printf("cpu arm: %08x: %08x SKIPPED\n", cpu->pc - 8, opcode);
 		return;
 	}
-
-	// printf("cpu arm: %08x: %08x\n", cpu->pc - 8, opcode);
 
 	uint32_t lutidx = ((opcode >> 16) & 0x0ff0) | ((opcode >> 4) & 0x000f);
 
@@ -1143,10 +1334,15 @@ void op_thumb_trans_sp(CPU *cpu, uint16_t opcode) {
 }
 
 void op_thumb_add_pc_sp(CPU *cpu, uint16_t opcode) {
-	(void)cpu;
-	(void)opcode;
-	lerror("op_thumb_add_pc_sp is unimplemented\n");
-	exit(1);
+	bool s = (opcode >> 11) & 1;
+	uint8_t rd = (opcode >> 8) & 7;
+	uint32_t imm = (opcode & 0xff) << 2;
+
+	if (!s) {
+		cpu->regs[rd] = (cpu->pc & ~2) + imm;
+	} else {
+		cpu->regs[rd] = cpu->sp + imm;
+	}
 }
 
 void op_thumb_add_sp(CPU *cpu, uint16_t opcode) {
@@ -1208,17 +1404,41 @@ void op_thumb_push_pop(CPU *cpu, uint16_t opcode) {
 }
 
 void op_thumb_blocktrans(CPU *cpu, uint16_t opcode) {
-	(void)cpu;
-	(void)opcode;
-	lerror("op_thumb_blocktrans is unimplemented\n");
-	exit(1);
+	bool l = (opcode >> 11) & 1;
+	uint8_t rb = (opcode >> 8) & 7;
+	uint8_t rlist = opcode & 0xff;
+
+	uint32_t addr = cpu->regs[rb];
+
+	for (int i = 0; i < 8; i++) {
+		if ((rlist >> i) & 1) {
+			if (!l) {
+				bus_write32(cpu->bus, addr, cpu->regs[i]);
+			} else {
+				cpu->regs[i] = bus_read32(cpu->bus, addr);
+			}
+			addr += 4;
+		}
+	}
+
+	if (!l || !((rlist >> rb) & 1)) {
+		cpu->regs[rb] = addr;
+	}
 }
 
 void op_thumb_swi(CPU *cpu, uint16_t opcode) {
-	(void)cpu;
 	(void)opcode;
-	lerror("op_thumb_swi is unimplemented\n");
-	exit(1);
+	uint32_t return_addr = cpu->pc - 2;
+
+	OperatingMode old_mode = cpu->mode;
+	swap_banked_registers(cpu, old_mode, OPMODE_SWI);
+	cpu->spsr = cpu->cpsr;
+	cpu->mode = OPMODE_SWI;
+	cpu->i = 1;
+	cpu->t = 0;
+
+	cpu->lr = return_addr;
+	cpu->pc = 0x00000008 + 4;
 }
 
 void op_thumb_branch_cond(CPU *cpu, uint16_t opcode) {
@@ -1254,8 +1474,6 @@ void op_thumb_branch_link(CPU *cpu, uint16_t opcode) {
 void cpu_exec_thumb(CPU *cpu) {
 	uint16_t opcode = bus_read16(cpu->bus, cpu->pc - 2);
 	cpu->pc += 2;
-
-	// printf("cpu thumb: %08x: %04x\n", cpu->pc - 4, opcode);
 
 	uint8_t format = opcode >> 10;
 
@@ -1325,8 +1543,30 @@ void cpu_exec_thumb(CPU *cpu) {
 }
 
 void cpu_step(CPU *cpu) {
-	// 1 cycle per instruction
 	bus_clock(cpu->bus);
+
+	if (cpu->bus->io_ie & cpu->bus->io_if) {
+		cpu->bus->halted = false;
+	}
+
+	if (cpu->bus->halted) {
+		return;
+	}
+
+	if (cpu->bus->io_ime && (cpu->bus->io_ie & cpu->bus->io_if) && !cpu->i) {
+		OperatingMode old_mode = cpu->mode;
+		swap_banked_registers(cpu, old_mode, OPMODE_IRQ);
+		cpu->spsr = cpu->cpsr;
+		cpu->mode = OPMODE_IRQ;
+		cpu->i = 1;
+
+		cpu->lr = cpu->t ? (cpu->pc + 2) : cpu->pc;
+		cpu->t = 0;
+
+		cpu->pc = 0x00000018 + 4;
+		return;
+	}
+
 	if (!cpu->t) {
 		cpu_exec_arm(cpu);
 	} else {

@@ -1,12 +1,29 @@
 #include "bus.h"
+#include "apu.h"
 #include "cart.h"
+#include "dma.h"
+#include "host.h"
 #include "log.h"
+#include "ppu.h"
+#include "timer.h"
 
 #include <string.h>
 
 void bus_init(Bus *bus) {
 	memset(bus->iwram, 0, sizeof(bus->iwram));
 	memset(bus->ewram, 0, sizeof(bus->ewram));
+	memset(bus->ppu->pram, 0, sizeof(bus->ppu->pram));
+	memset(bus->ppu->vram, 0, sizeof(bus->ppu->vram));
+	memset(bus->ppu->oam, 0, sizeof(bus->ppu->oam));
+	bus->io_ie = 0;
+	bus->io_if = 0;
+	bus->io_ime = 0;
+	bus->halted = false;
+	bus->keycnt = 0;
+	apu_init(bus->apu);
+	ppu_init(bus->ppu);
+	dma_init(bus->dma, bus);
+	timer_init(bus->timers, bus);
 	cpu_init(bus->cpu);
 }
 
@@ -15,47 +32,46 @@ void bus_free(Bus *bus) {
 }
 
 void bus_clock(Bus *bus) {
-	if (bus->cycles++ == 16000000) {
-		bus->cycles = 0;
-		bus->vblank_started = true; // force for now
+	bus->cycles++;
+	apu_clock(bus->apu);
+	ppu_clock(bus->ppu);
+	timer_clock(bus->timers);
+	dma_clock(bus->dma);
+
+	if (bus->ppu->vblank_started) {
+		bus->ppu->vblank_started = false;
+		bus->vblank_started = true;
+		dma_check_vblank(bus->dma);
+	}
+	if (bus->ppu->irq_vblank) {
+		bus->ppu->irq_vblank = false;
+		bus->io_if |= (1 << 0);
+	}
+
+	if (bus->keycnt & (1 << 14)) {
+		uint16_t mask = bus->keycnt & 0x03ff;
+		uint16_t pressed = (~host_get_controller()) & 0x03ff;
+		bool cond = (bus->keycnt & (1 << 15))
+			? (mask != 0 && (pressed & mask) == mask)
+			: ((pressed & mask) != 0);
+		if (cond) {
+			bus->io_if |= (1 << 12);
+		}
 	}
 }
 
 void bus_reset(Bus *bus) {
+	bus->io_ie = 0;
+	bus->io_if = 0;
+	bus->io_ime = 0;
+	bus->halted = false;
+	bus->keycnt = 0;
+	apu_reset(bus->apu);
+	ppu_reset(bus->ppu);
+	dma_reset(bus->dma);
+	timer_reset(bus->timers);
 	cpu_reset(bus->cpu);
 }
-
-// General Internal Memory
-
-//   00000000-00003FFF   BIOS - System ROM         (16 KBytes)
-//   00004000-01FFFFFF   Not used
-//   02000000-0203FFFF   WRAM - On-board Work RAM  (256 KBytes) 2 Wait
-//   02040000-02FFFFFF   Not used
-//   03000000-03007FFF   WRAM - On-chip Work RAM   (32 KBytes)
-//   03008000-03FFFFFF   Not used
-//   04000000-040003FE   I/O Registers
-//   04000400-04FFFFFF   Not used
-
-// Internal Display Memory
-
-//   05000000-050003FF   BG/OBJ Palette RAM        (1 Kbyte)
-//   05000400-05FFFFFF   Not used
-//   06000000-06017FFF   VRAM - Video RAM          (96 KBytes)
-//   06018000-06FFFFFF   Not used
-//   07000000-070003FF   OAM - OBJ Attributes      (1 Kbyte)
-//   07000400-07FFFFFF   Not used
-
-// External Memory (Game Pak)
-
-//   08000000-09FFFFFF   Game Pak ROM/FlashROM (max 32MB) - Wait State 0
-//   0A000000-0BFFFFFF   Game Pak ROM/FlashROM (max 32MB) - Wait State 1
-//   0C000000-0DFFFFFF   Game Pak ROM/FlashROM (max 32MB) - Wait State 2
-//   0E000000-0E00FFFF   Game Pak SRAM    (max 64 KBytes) - 8bit Bus width
-//   0E010000-0FFFFFFF   Not used
-
-// Unused Memory Area
-
-//   10000000-FFFFFFFF   Not used (upper 4bits of address bus unused)
 
 uint8_t bus_read8(Bus *bus, uint32_t addr) {
 	uint8_t region = addr >> 24;
@@ -67,6 +83,38 @@ uint8_t bus_read8(Bus *bus, uint32_t addr) {
 			return bus->ewram[addr & 0x3ffff];
 		case 0x03:
 			return bus->iwram[addr & 0x7fff];
+		case 0x04:
+			// io region
+			switch (addr & 0xffffff) {
+				case 0x000000 ... 0x00005f:
+					return ppu_read8(bus->ppu, addr);
+				case 0x000060 ... 0x0000af:
+					return apu_read8(bus->apu, addr);
+				case 0x0000b0 ... 0x0000df:
+					return dma_read8(bus->dma, addr);
+				case 0x000100 ... 0x00010f:
+					return timer_read8(bus->timers, addr);
+				case 0x000130: return host_get_controller() & 0xff;
+				case 0x000131: return (host_get_controller() >> 8) & 0xff;
+				case 0x000132: return bus->keycnt & 0xff;
+				case 0x000133: return (bus->keycnt >> 8) & 0xff;
+				case 0x000200: return bus->io_ie & 0xff;
+				case 0x000201: return (bus->io_ie >> 8) & 0xff;
+				case 0x000202: return bus->io_if & 0xff;
+				case 0x000203: return (bus->io_if >> 8) & 0xff;
+				case 0x000208: return bus->io_ime;
+				default:
+					return 0;
+			}
+		case 0x05:
+			return bus->ppu->pram[addr & 0x3ff];
+		case 0x06: {
+			uint32_t off = addr & 0x1ffff;
+			if (off >= 0x18000) off -= 0x8000;
+			return bus->ppu->vram[off];
+		}
+		case 0x07:
+			return bus->ppu->oam[addr & 0x3ff];
 		case 0x08 ... 0x0d: {
 			uint32_t rom_addr = addr & 0x01ffffff;
 			if (rom_addr < bus->cart->rom_size) return bus->cart->rom[rom_addr];
@@ -90,6 +138,34 @@ uint16_t bus_read16(Bus *bus, uint32_t addr) {
 			return *(uint16_t*)(bus->ewram + (aligned & 0x3ffff));
 		case 0x03:
 			return *(uint16_t*)(bus->iwram + (aligned & 0x7fff));
+		case 0x04:
+			// io region
+			switch (addr & 0xffffff) {
+				case 0x000000 ... 0x00005f:
+					return ppu_read16(bus->ppu, addr);
+				case 0x000060 ... 0x0000af:
+					return apu_read16(bus->apu, addr);
+				case 0x0000b0 ... 0x0000df:
+					return dma_read16(bus->dma, addr);
+				case 0x000100 ... 0x00010f:
+					return timer_read16(bus->timers, addr);
+				case 0x000130: return host_get_controller();
+				case 0x000132: return bus->keycnt;
+				case 0x000200: return bus->io_ie;
+				case 0x000202: return bus->io_if;
+				case 0x000208: return bus->io_ime;
+				default:
+					return 0;
+			}
+		case 0x05:
+			return *(uint16_t*)(bus->ppu->pram + (aligned & 0x3ff));
+		case 0x06: {
+			uint32_t off = aligned & 0x1ffff;
+			if (off >= 0x18000) off -= 0x8000;
+			return *(uint16_t*)(bus->ppu->vram + off);
+		}
+		case 0x07:
+			return *(uint16_t*)(bus->ppu->oam + (aligned & 0x3ff));
 		case 0x08 ... 0x0d: {
 			uint32_t rom_addr = aligned & 0x01ffffff;
 			if (rom_addr + 1 < bus->cart->rom_size) return *(uint16_t*)(bus->cart->rom + rom_addr);
@@ -114,6 +190,38 @@ uint32_t bus_read32(Bus *bus, uint32_t addr) {
 		case 0x03:
 			val = *(uint32_t*)(bus->iwram + (aligned & 0x7fff));
 			break;
+		case 0x04:
+			// io region
+			switch (addr & 0xffffff) {
+				case 0x000000 ... 0x00005f:
+					return ppu_read32(bus->ppu, addr);
+				case 0x000060 ... 0x0000af:
+					return apu_read32(bus->apu, addr);
+				case 0x0000b0 ... 0x0000df:
+					val = dma_read32(bus->dma, addr);
+					break;
+				case 0x000100 ... 0x00010f:
+					val = timer_read32(bus->timers, addr);
+					break;
+				case 0x000130: return (uint32_t)host_get_controller() | ((uint32_t)bus->keycnt << 16);
+				case 0x000200: return (uint32_t)bus->io_ie | ((uint32_t)bus->io_if << 16);
+				case 0x000208: return bus->io_ime;
+				default:
+					return 0;
+			}
+			break;
+		case 0x05:
+			val = *(uint32_t*)(bus->ppu->pram + (aligned & 0x3ff));
+			break;
+		case 0x06: {
+			uint32_t off = aligned & 0x1ffff;
+			if (off >= 0x18000) off -= 0x8000;
+			val = *(uint32_t*)(bus->ppu->vram + off);
+			break;
+		}
+		case 0x07:
+			val = *(uint32_t*)(bus->ppu->oam + (aligned & 0x3ff));
+			break;
 		case 0x08 ... 0x0d: {
 			uint32_t rom_addr = aligned & 0x01ffffff;
 			if (rom_addr + 3 < bus->cart->rom_size) val = *(uint32_t*)(bus->cart->rom + rom_addr);
@@ -137,11 +245,49 @@ void bus_write8(Bus *bus, uint32_t addr, uint8_t val) {
 		case 0x03:
 			bus->iwram[addr & 0x7fff] = val;
 			break;
+		case 0x04:
+			// io region
+			switch (addr & 0xffffff) {
+				case 0x000000 ... 0x00005f:
+					ppu_write8(bus->ppu, addr, val);
+					break;
+				case 0x000060 ... 0x0000af:
+					apu_write8(bus->apu, addr, val);
+					break;
+				case 0x0000b0 ... 0x0000df:
+					dma_write8(bus->dma, addr, val);
+					break;
+				case 0x000100 ... 0x00010f:
+					timer_write8(bus->timers, addr, val);
+					break;
+				case 0x000132: bus->keycnt = (bus->keycnt & 0xff00) | val; break;
+				case 0x000133: bus->keycnt = (bus->keycnt & 0x00ff) | ((uint16_t)val << 8); break;
+				case 0x000200: bus->io_ie = (bus->io_ie & 0xff00) | val; break;
+				case 0x000201: bus->io_ie = (bus->io_ie & 0x00ff) | ((uint16_t)val << 8); break;
+				case 0x000202: bus->io_if &= ~val; break;
+				case 0x000203: bus->io_if &= ~((uint16_t)val << 8); break;
+				case 0x000208: bus->io_ime = val & 1; break;
+				case 0x000301: bus->halted = true; break;
+				default:
+					break;
+			}
+			break;
+		case 0x05:
+			bus->ppu->pram[addr & 0x3ff] = val;
+			break;
+		case 0x06: {
+			uint32_t off = addr & 0x1ffff;
+			if (off >= 0x18000) off -= 0x8000;
+			bus->ppu->vram[off] = val;
+			break;
+		}
+		case 0x07:
+			bus->ppu->oam[addr & 0x3ff] = val;
+			break;
 		case 0x0e: case 0x0f:
 			cart_write(bus->cart, addr, val);
 			break;
 		default:
-			ldeb1("bus_write8: unmapped: 0x%08x: %02x\n", addr, val);
 			break;
 	}
 }
@@ -156,8 +302,43 @@ void bus_write16(Bus *bus, uint32_t addr, uint16_t val) {
 		case 0x03:
 			*(uint16_t*)(bus->iwram + (aligned & 0x7fff)) = val;
 			break;
+		case 0x04:
+			// io region
+			switch (addr & 0xffffff) {
+				case 0x000000 ... 0x00005f:
+					ppu_write16(bus->ppu, addr, val);
+					break;
+				case 0x000060 ... 0x0000af:
+					apu_write16(bus->apu, addr, val);
+					break;
+				case 0x0000b0 ... 0x0000df:
+					dma_write16(bus->dma, addr, val);
+					break;
+				case 0x000100 ... 0x00010f:
+					timer_write16(bus->timers, addr, val);
+					break;
+				case 0x000132: bus->keycnt = val; break;
+				case 0x000200: bus->io_ie = val; break;
+				case 0x000202: bus->io_if &= ~val; break;
+				case 0x000208: bus->io_ime = val & 1; break;
+				case 0x000300: case 0x000301: bus->halted = true; break;
+				default:
+					break;
+			}
+			break;
+		case 0x05:
+			*(uint16_t*)(bus->ppu->pram + (aligned & 0x3ff)) = val;
+			break;
+		case 0x06: {
+			uint32_t off = aligned & 0x1ffff;
+			if (off >= 0x18000) off -= 0x8000;
+			*(uint16_t*)(bus->ppu->vram + off) = val;
+			break;
+		}
+		case 0x07:
+			*(uint16_t*)(bus->ppu->oam + (aligned & 0x3ff)) = val;
+			break;
 		default:
-			ldeb1("bus_write16: unmapped: 0x%08x: %04x\n", addr, val);
 			break;
 	}
 }
@@ -172,8 +353,45 @@ void bus_write32(Bus *bus, uint32_t addr, uint32_t val) {
 		case 0x03:
 			*(uint32_t*)(bus->iwram + (aligned & 0x7fff)) = val;
 			break;
+		case 0x04:
+			// io region
+			switch (addr & 0xffffff) {
+				case 0x000000 ... 0x00005f:
+					ppu_write32(bus->ppu, addr, val);
+					break;
+				case 0x000060 ... 0x0000af:
+					apu_write32(bus->apu, addr, val);
+					break;
+				case 0x0000b0 ... 0x0000df:
+					dma_write32(bus->dma, addr, val);
+					break;
+				case 0x000100 ... 0x00010f:
+					timer_write32(bus->timers, addr, val);
+					break;
+				case 0x000130: bus->keycnt = val >> 16; break;
+				case 0x000200:
+					bus->io_ie = val & 0xffff;
+					bus->io_if &= ~(val >> 16);
+					break;
+				case 0x000208: bus->io_ime = val & 1; break;
+				case 0x000300: bus->halted = true; break;
+				default:
+					break;
+			}
+			break;
+		case 0x05:
+			*(uint32_t*)(bus->ppu->pram + (aligned & 0x3ff)) = val;
+			break;
+		case 0x06: {
+			uint32_t off = aligned & 0x1ffff;
+			if (off >= 0x18000) off -= 0x8000;
+			*(uint32_t*)(bus->ppu->vram + off) = val;
+			break;
+		}
+		case 0x07:
+			*(uint32_t*)(bus->ppu->oam + (aligned & 0x3ff)) = val;
+			break;
 		default:
-			ldeb1("bus_write32: unmapped: 0x%08x: %08x\n", addr, val);
 			break;
 	}
 }

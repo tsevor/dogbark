@@ -1,10 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "apu.h"
 #include "bus.h"
 #include "cart.h"
 #include "cpu.h"
+#include "dma.h"
 #include "host.h"
+#include "ppu.h"
+#include "timer.h"
 
 int loglevel = 3;
 
@@ -30,7 +34,17 @@ int main(int argc, char **argv) {
 	}
 
 	// declare components
-	Bus bus = { .cart = &cart };
+	APU apu = { 0 };
+	DMA dma = { 0 };
+	PPU ppu = { 0 };
+	Timers timers = { 0 };
+	Bus bus = {
+		.cart = &cart,
+		.apu = &apu,
+		.dma = &dma,
+		.ppu = &ppu,
+		.timers = &timers,
+	};
 	CPU cpu = { .bus  = &bus  };
 
 	bus.cpu = &cpu;

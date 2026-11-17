@@ -11,18 +11,16 @@
 #define PIXEL_SCALE 2
 
 typedef enum ControllerButton {
-	BUTTON_B      = 0x8000,
-	BUTTON_Y      = 0x4000,
-	BUTTON_SELECT = 0x2000,
-	BUTTON_START  = 0x1000,
-	BUTTON_UP     = 0x0800,
-	BUTTON_DOWN   = 0x0400,
-	BUTTON_LEFT   = 0x0200,
-	BUTTON_RIGHT  = 0x0100,
-	BUTTON_A      = 0x0080,
-	BUTTON_X      = 0x0040,
-	BUTTON_L      = 0x0020,
-	BUTTON_R      = 0x0010,
+	BUTTON_A      = 0x0001,
+	BUTTON_B      = 0x0002,
+	BUTTON_SELECT = 0x0004,
+	BUTTON_START  = 0x0008,
+	BUTTON_RIGHT  = 0x0010,
+	BUTTON_LEFT   = 0x0020,
+	BUTTON_UP     = 0x0040,
+	BUTTON_DOWN   = 0x0080,
+	BUTTON_R      = 0x0100,
+	BUTTON_L      = 0x0200,
 } ControllerButton;
 
 typedef enum EmuCtlEventType {

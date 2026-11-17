@@ -100,7 +100,7 @@ int host_init() {
 
 	// audio
 	SDL_AudioSpec spec = {
-		.freq = 32000,
+		.freq = 32768,
 		.format = SDL_AUDIO_S16,
 		.channels = 2,
 	};
@@ -225,33 +225,29 @@ void host_frame() {
 	const bool* kb_state = SDL_GetKeyboardState(NULL);
 
 	uint16_t pad = (
-		  (kb_state[SDL_SCANCODE_X]     ? BUTTON_B      : 0)
-		| (kb_state[SDL_SCANCODE_Z]     ? BUTTON_Y      : 0)
+		  (kb_state[SDL_SCANCODE_S]     ? BUTTON_A      : 0)
+		| (kb_state[SDL_SCANCODE_A]     ? BUTTON_B      : 0)
 		| (kb_state[SDL_SCANCODE_C]     ? BUTTON_SELECT : 0)
 		| (kb_state[SDL_SCANCODE_D]     ? BUTTON_START  : 0)
+		| (kb_state[SDL_SCANCODE_RIGHT] ? BUTTON_RIGHT  : 0)
+		| (kb_state[SDL_SCANCODE_LEFT]  ? BUTTON_LEFT   : 0)
 		| (kb_state[SDL_SCANCODE_UP]    ? BUTTON_UP     : 0)
 		| (kb_state[SDL_SCANCODE_DOWN]  ? BUTTON_DOWN   : 0)
-		| (kb_state[SDL_SCANCODE_LEFT]  ? BUTTON_LEFT   : 0)
-		| (kb_state[SDL_SCANCODE_RIGHT] ? BUTTON_RIGHT  : 0)
-		| (kb_state[SDL_SCANCODE_S]     ? BUTTON_A      : 0)
-		| (kb_state[SDL_SCANCODE_A]     ? BUTTON_X      : 0)
-		| (kb_state[SDL_SCANCODE_Q]     ? BUTTON_L      : 0)
 		| (kb_state[SDL_SCANCODE_W]     ? BUTTON_R      : 0)
+		| (kb_state[SDL_SCANCODE_Q]     ? BUTTON_L      : 0)
 	);
 
 	if (host.gamepad) {
+		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_EAST))           pad |= BUTTON_A;
 		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_SOUTH))          pad |= BUTTON_B;
-		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_WEST))           pad |= BUTTON_Y;
 		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_BACK))           pad |= BUTTON_SELECT;
 		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_START))          pad |= BUTTON_START;
+		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT))     pad |= BUTTON_RIGHT;
+		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT))      pad |= BUTTON_LEFT;
 		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP))        pad |= BUTTON_UP;
 		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN))      pad |= BUTTON_DOWN;
-		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT))      pad |= BUTTON_LEFT;
-		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT))     pad |= BUTTON_RIGHT;
-		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_EAST))           pad |= BUTTON_A;
-		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_NORTH))          pad |= BUTTON_X;
-		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER))  pad |= BUTTON_L;
 		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) pad |= BUTTON_R;
+		if (SDL_GetGamepadButton(host.gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER))  pad |= BUTTON_L;
 	}
 
 	if ((pad & BUTTON_UP) && (pad & BUTTON_DOWN)) {
@@ -339,5 +335,5 @@ bool host_get_event(EmuCtlEvent *event) {
 }
 
 uint16_t host_get_controller() {
-	return host.controller;
+	return ~host.controller; // active low
 }

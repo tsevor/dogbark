@@ -49,18 +49,16 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller, guint keyval, 
 
 	switch (keyval) {
 		// controller
-		case GDK_KEY_x:     host.controller |= BUTTON_B;      break;
-		case GDK_KEY_z:     host.controller |= BUTTON_Y;      break;
+		case GDK_KEY_s:     host.controller |= BUTTON_A;      break;
+		case GDK_KEY_a:     host.controller |= BUTTON_B;      break;
 		case GDK_KEY_c:     host.controller |= BUTTON_SELECT; break;
 		case GDK_KEY_d:     host.controller |= BUTTON_START;  break;
+		case GDK_KEY_Right: host.controller |= BUTTON_RIGHT;  break;
+		case GDK_KEY_Left:  host.controller |= BUTTON_LEFT;   break;
 		case GDK_KEY_Up:    host.controller |= BUTTON_UP;     break;
 		case GDK_KEY_Down:  host.controller |= BUTTON_DOWN;   break;
-		case GDK_KEY_Left:  host.controller |= BUTTON_LEFT;   break;
-		case GDK_KEY_Right: host.controller |= BUTTON_RIGHT;  break;
-		case GDK_KEY_s:     host.controller |= BUTTON_A;      break;
-		case GDK_KEY_a:     host.controller |= BUTTON_X;      break;
-		case GDK_KEY_q:     host.controller |= BUTTON_L;      break;
 		case GDK_KEY_w:     host.controller |= BUTTON_R;      break;
+		case GDK_KEY_q:     host.controller |= BUTTON_L;      break;
 		// emu control once
 		case GDK_KEY_r: push_event(E_RESET, NULL); break;
 		// emu control held
@@ -238,5 +236,5 @@ bool host_get_event(EmuCtlEvent *event) {
 }
 
 uint16_t host_get_controller() {
-	return host.controller;
+	return ~host.controller; // active low
 }
