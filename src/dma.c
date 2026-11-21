@@ -27,6 +27,8 @@ static void dma_run_channel(DMA *dma, int ch_id) {
 
 	uint32_t sad_mask = (ch_id == 0) ? 0x07ffffff : 0x0fffffff;
 	uint32_t dad_mask = (ch_id == 3) ? 0x0fffffff : 0x07ffffff;
+	sad_mask &= is_32 ? 0xfffffffc : 0xfffffffe;
+	dad_mask &= is_32 ? 0xfffffffc : 0xfffffffe;
 
 	for (uint32_t i = 0; i < count; i++) {
 		if (is_32) {
@@ -55,7 +57,9 @@ static void dma_run_channel(DMA *dma, int ch_id) {
 		if (dst_ctl == 3) {
 			ch->current_dad = ch->dad;
 		}
-		ch->current_count = ch->count ? ch->count : ((ch_id == 3) ? 0x10000 : 0x4000);
+		uint32_t max_count = (ch_id == 3) ? 0x10000 : 0x4000;
+		uint32_t masked_count = ch->count & (max_count - 1);
+		ch->current_count = masked_count ? masked_count : max_count;
 	} else {
 		ch->cnt_h &= ~0x8000;
 		ch->active = false;
@@ -166,7 +170,8 @@ void dma_write16(DMA *dma, uint8_t addr, uint16_t val) {
 				ch->current_sad = ch->sad;
 				ch->current_dad = ch->dad;
 				uint32_t max_count = (ch_id == 3) ? 0x10000 : 0x4000;
-				ch->current_count = ch->count ? ch->count : max_count;
+				uint32_t masked_count = ch->count & (max_count - 1);
+				ch->current_count = masked_count ? masked_count : max_count;
 				ch->active = true;
 
 				uint8_t timing = (val >> 12) & 3;

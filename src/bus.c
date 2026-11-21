@@ -37,7 +37,10 @@ void bus_clock(Bus *bus) {
 	ppu_clock(bus->ppu);
 	timer_clock(bus->timers);
 	dma_clock(bus->dma);
-
+	if (bus->ppu->hblank_started) {
+		bus->ppu->hblank_started = false;
+		dma_check_hblank(bus->dma);
+	}
 	if (bus->ppu->vblank_started) {
 		bus->ppu->vblank_started = false;
 		bus->vblank_started = true;
@@ -186,10 +189,6 @@ uint16_t bus_read16(Bus *bus, uint32_t addr) {
 		default:
 			return 0;
 	}
-
-	if (addr & 1) {
-		val = (val >> 8) | (val << 8);
-	}
 	return val;
 }
 
@@ -251,8 +250,6 @@ uint32_t bus_read32(Bus *bus, uint32_t addr) {
 			break;
 	}
 
-	uint32_t roll = (addr & 3) << 3;
-	if (roll) val = (val >> roll) | (val << (32 - roll));
 	return val;
 }
 

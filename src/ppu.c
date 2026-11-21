@@ -9,6 +9,15 @@ static const uint8_t OBJ_SIZE[4][3][2] = {
 	{ { 64, 64 }, { 64, 32 }, { 32, 64 } }, // 3
 };
 
+static const uint8_t BG_TYPES[6][4] = {
+	{ 1, 1, 1, 1 }, // 0 = none
+	{ 1, 1, 2, 0 }, // 1 = text
+	{ 0, 0, 2, 2 }, // 2 = affine
+	{ 0, 0, 3, 0 }, // 3 = bitmap 240×160 16bpp
+	{ 0, 0, 4, 0 }, // 4 = bitmap 240×160 8bpp  (2 frames)
+	{ 0, 0, 5, 0 }, // 5 = bitmap 160×128 16bpp (2 frames)
+};
+
 void ppu_init(PPU *ppu) {
 	ppu_reset(ppu);
 }
@@ -122,7 +131,6 @@ void ppu_draw_scanline(PPU *ppu) {
 					lay[sx][prio] = ppu->colors[0x100 + pal_idx] & 0x7fff;
 				}
 			} else {
-
 				used_cycles += width;
 
 				for (int i = 0; i < width; i++) {
@@ -152,16 +160,12 @@ void ppu_draw_scanline(PPU *ppu) {
 						pal_idx = ppu->vram[tile_addr + tpy * 8 + tpx];
 					} else {
 						pal_idx = ppu->vram[tile_addr + tpy * 4 + (tpx / 2)];
-						if (tpx & 1) {
-							pal_idx = pal_idx >> 4;
-						} else {
-							pal_idx = pal_idx & 0xf;
-						}
+						pal_idx = (tpx & 1) ? pal_idx >> 4 : pal_idx & 0xf;
 					}
 
 					if (pal_idx == 0) continue;
 
-					if (!is_8bpp) pal_idx = (ppu->sprites[s].pal * 16) + pal_idx;
+					if (!is_8bpp) pal_idx += ppu->sprites[s].pal * 16;
 					lay[sx][prio] = ppu->colors[0x100 + pal_idx] & 0x7fff;
 				}
 			}
@@ -169,7 +173,75 @@ void ppu_draw_scanline(PPU *ppu) {
 		}
 	}
 
-	// do bgs here
+	for (int bg = 0; bg < 4; bg++) {
+		if (!(ppu->dispcnt >> (8 + bg) & 1)) continue;
+		int prio = ppu->bg_ctrl[bg].prio;
+
+		switch (BG_TYPES[ppu->bg_mode][bg]) {
+			case 0: break;
+			case 1: { // text
+				int char_base = ppu->bg_ctrl[bg].c_base * 0x4000;
+				int screen_base = ppu->bg_ctrl[bg].s_base * 0x800;
+
+				bool is_8bpp = ppu->bg_ctrl[bg].pal_m;
+
+				int map_w = ppu->bg_ctrl[bg].size_x ? 512 : 256;
+				int map_h = ppu->bg_ctrl[bg].size_y ? 512 : 256;
+
+				for (int sx = 0; sx < GBA_WIDTH; sx++) {
+					if ((lay[sx][prio] & 0x8000) == 0) continue;
+
+					int mx = (sx + ppu->bghofs[bg]) & (map_w - 1);
+					int my = (sy + ppu->bgvofs[bg]) & (map_h - 1);
+
+					int screen_addr = screen_base;
+					if (mx >= 256) screen_addr += 0x800;
+					if (my >= 256) screen_addr += (map_w == 512) ? 0x1000 : 0x800;
+
+					int tx = (mx & 0xff) / 8;
+					int ty = (my & 0xff) / 8;
+
+					uint16_t entry = ppu->vram16[(screen_addr >> 1) + (ty * 32 + tx)];
+
+					int tile_num = entry & 0x3ff;
+					bool hflip = (entry >> 10) & 1;
+					bool vflip = (entry >> 11) & 1;
+					int pal_bank = (entry >> 12) & 0xf;
+
+					int tpx = hflip ? 7 - (mx % 8) : mx % 8;
+					int tpy = vflip ? 7 - (my % 8) : my % 8;
+
+					int pal_idx;
+
+					if (is_8bpp) {
+						int tile_addr = char_base + tile_num * 64;
+						if (tile_addr >= 0x10000) continue;
+						pal_idx = ppu->vram[tile_addr + tpy * 8 + tpx];
+					} else {
+						int tile_addr = char_base + tile_num * 32;
+						pal_idx = ppu->vram[tile_addr + tpy * 4 + (tpx / 2)];
+						pal_idx = (tpx & 1) ? pal_idx >> 4 : pal_idx & 0xf;
+					}
+					if (pal_idx == 0) continue;
+
+					if (!is_8bpp) pal_idx += pal_bank * 16;
+					lay[sx][prio] = ppu->colors[pal_idx] & 0x7fff;
+				}
+			} break;
+			case 2: { // affine
+
+			} break;
+			case 3: { // bitmap 240×160 16bpp
+
+			} break;
+			case 4: { // bitmap 240×160 8bpp  (2 frames)
+
+			} break;
+			case 5: { // bitmap 160×128 16bpp (2 frames)
+
+			} break;
+		}
+	}
 
 	for (int x = 0; x < GBA_WIDTH; x++) {
 		uint16_t color = ppu->colors[0];
@@ -194,6 +266,10 @@ void ppu_clock(PPU *ppu) {
 
 	ppu->scanline_cycles++;
 
+	if (ppu->scanline_cycles == 960 && ppu->vcount < 160) {
+		ppu->hblank_started = true;
+	}
+	
 	if (ppu->scanline_cycles >= 1232) {
 		ppu->scanline_cycles = 0;
 		ppu->vcount++;
@@ -208,6 +284,10 @@ void ppu_clock(PPU *ppu) {
 			host_copy_buffer();
 		}
 	}
+}
+
+static inline int32_t sign_ext28(uint32_t val) {
+	return (int32_t)(val << 4) >> 4;
 }
 
 uint8_t ppu_read8(PPU *ppu, uint8_t addr) {
@@ -227,6 +307,11 @@ uint8_t ppu_read8(PPU *ppu, uint8_t addr) {
 		case 0x06: return ppu->vcount & 0xff;
 		case 0x07: return (ppu->vcount >> 8) & 0xff;
 
+		case 0x08 ... 0x0f: {
+			int bg = (addr - 0x08) >> 1;
+			return (addr & 1) ? (ppu->bgcnt[bg] >> 8) : (ppu->bgcnt[bg] & 0xff);
+		}
+
 		default:
 			return 0;
 	}
@@ -243,6 +328,8 @@ uint16_t ppu_read16(PPU *ppu, uint8_t addr) {
 			return stat;
 		}
 		case 0x06: return ppu->vcount;
+		case 0x08: case 0x0a: case 0x0c: case 0x0e:
+			return ppu->bgcnt[(addr - 0x08) >> 1];
 		default:
 			return (uint16_t)ppu_read8(ppu, addr) | ((uint16_t)ppu_read8(ppu, addr + 1) << 8);
 	}
@@ -258,6 +345,56 @@ void ppu_write8(PPU *ppu, uint8_t addr, uint8_t val) {
 		case 0x01: ppu->dispcnt = (ppu->dispcnt & 0x00ff) | ((uint16_t)val << 8); break;
 		case 0x04: ppu->dispstat = (ppu->dispstat & 0xff00) | (val & 0xf8); break;
 		case 0x05: ppu->dispstat = (ppu->dispstat & 0x00ff) | ((uint16_t)val << 8); break;
+
+		case 0x08 ... 0x0f: {
+			int bg = (addr - 0x08) >> 1;
+			if (addr & 1) ppu->bgcnt[bg] = (ppu->bgcnt[bg] & 0x00ff) | ((uint16_t)val << 8);
+			else          ppu->bgcnt[bg] = (ppu->bgcnt[bg] & 0xff00) | val;
+			break;
+		}
+
+		case 0x10 ... 0x1f: {
+			int bg = (addr - 0x10) >> 2;
+			uint16_t *ofs = (addr & 2) ? &ppu->bgvofs[bg] : &ppu->bghofs[bg];
+			if (addr & 1) *ofs = (*ofs & 0x00ff) | ((uint16_t)(val & 1) << 8);
+			else          *ofs = (*ofs & 0xff00) | val;
+			break;
+		}
+
+		case 0x20 ... 0x27:
+		case 0x30 ... 0x37: {
+			int idx = (addr >= 0x30) ? 1 : 0;
+			int16_t *p = NULL;
+			switch (addr & 0x06) {
+				case 0x00: p = &ppu->bg_pa[idx]; break;
+				case 0x02: p = &ppu->bg_pb[idx]; break;
+				case 0x04: p = &ppu->bg_pc[idx]; break;
+				case 0x06: p = &ppu->bg_pd[idx]; break;
+			}
+			uint16_t cur = (uint16_t)*p;
+			if (addr & 1) *p = (int16_t)((cur & 0x00ff) | ((uint16_t)val << 8));
+			else          *p = (int16_t)((cur & 0xff00) | val);
+			break;
+		}
+
+		case 0x28 ... 0x2f:
+		case 0x38 ... 0x3f: {
+			int idx = (addr >= 0x30) ? 1 : 0;
+			bool is_y = (addr & 0x04) != 0;
+			int shift = (addr & 3) * 8;
+			uint32_t mask = ~(0xffu << shift);
+			if (is_y) {
+				uint32_t cur = ((uint32_t)ppu->bg_y[idx] & mask) | ((uint32_t)val << shift);
+				ppu->bg_y[idx] = sign_ext28(cur);
+				ppu->bg_ref_y[idx] = ppu->bg_y[idx];
+			} else {
+				uint32_t cur = ((uint32_t)ppu->bg_x[idx] & mask) | ((uint32_t)val << shift);
+				ppu->bg_x[idx] = sign_ext28(cur);
+				ppu->bg_ref_x[idx] = ppu->bg_x[idx];
+			}
+			break;
+		}
+
 		default: break;
 	}
 }
@@ -266,6 +403,27 @@ void ppu_write16(PPU *ppu, uint8_t addr, uint16_t val) {
 	switch (addr) {
 		case 0x00: ppu->dispcnt = val; break;
 		case 0x04: ppu->dispstat = (val & 0xfff8); break;
+
+		case 0x08: case 0x0a: case 0x0c: case 0x0e:
+			ppu->bgcnt[(addr - 0x08) >> 1] = val;
+			break;
+
+		case 0x10 ... 0x1e: {
+			int bg = (addr - 0x10) >> 2;
+			if (addr & 2) ppu->bgvofs[bg] = val & 0x01ff;
+			else          ppu->bghofs[bg] = val & 0x01ff;
+			break;
+		}
+
+		case 0x20: ppu->bg_pa[0] = (int16_t)val; break;
+		case 0x22: ppu->bg_pb[0] = (int16_t)val; break;
+		case 0x24: ppu->bg_pc[0] = (int16_t)val; break;
+		case 0x26: ppu->bg_pd[0] = (int16_t)val; break;
+		case 0x30: ppu->bg_pa[1] = (int16_t)val; break;
+		case 0x32: ppu->bg_pb[1] = (int16_t)val; break;
+		case 0x34: ppu->bg_pc[1] = (int16_t)val; break;
+		case 0x36: ppu->bg_pd[1] = (int16_t)val; break;
+
 		default:
 			ppu_write8(ppu, addr, val);
 			ppu_write8(ppu, addr + 1, (val >> 8));
@@ -274,6 +432,14 @@ void ppu_write16(PPU *ppu, uint8_t addr, uint16_t val) {
 }
 
 void ppu_write32(PPU *ppu, uint8_t addr, uint32_t val) {
-	ppu_write16(ppu, addr, val);
-	ppu_write16(ppu, addr + 2, (val >> 16));
+	switch (addr) {
+		case 0x28: ppu->bg_x[0] = ppu->bg_ref_x[0] = sign_ext28(val); break;
+		case 0x2c: ppu->bg_y[0] = ppu->bg_ref_y[0] = sign_ext28(val); break;
+		case 0x38: ppu->bg_x[1] = ppu->bg_ref_x[1] = sign_ext28(val); break;
+		case 0x3c: ppu->bg_y[1] = ppu->bg_ref_y[1] = sign_ext28(val); break;
+		default:
+			ppu_write16(ppu, addr, val);
+			ppu_write16(ppu, addr + 2, (val >> 16));
+			break;
+	}
 }

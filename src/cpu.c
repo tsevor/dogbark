@@ -408,6 +408,12 @@ void op_arm_dataproc(CPU *cpu, uint32_t opcode) {
 	}
 }
 
+static inline uint32_t cpu_ldr32(CPU *cpu, uint32_t addr) {
+	uint32_t val = bus_read32(cpu->bus, addr);
+	uint32_t roll = (addr & 3) << 3;
+	return roll ? ((val >> roll) | (val << (32 - roll))) : val;
+}
+
 void op_arm_transswp12(CPU *cpu, uint32_t opcode) {
 	(void)cpu;
 	(void)opcode;
@@ -698,7 +704,7 @@ void op_arm_transimm9(CPU *cpu, uint32_t opcode) {
 		if (b) {
 			data = bus_read8(cpu->bus, addr);
 		} else {
-			data = bus_read32(cpu->bus, addr);
+			data = cpu_ldr32(cpu, addr);
 		}
 		cpu->regs[rd] = data;
 
@@ -718,12 +724,8 @@ void op_arm_transimm9(CPU *cpu, uint32_t opcode) {
 			bus_write32(cpu->bus, addr, data);
 		}
 	}
-	if ((!p || w) && rn != 15) {
-		if (p) {
-			cpu->regs[rn] = addr;
-		} else {
-			cpu->regs[rn] = base + effective_offset;
-		}
+	if ((!p || w) && rn != 15 && !(l && rd == rn)) {
+		cpu->regs[rn] = p ? addr : (base + effective_offset);
 	}
 }
 
@@ -769,7 +771,7 @@ void op_arm_transreg9(CPU *cpu, uint32_t opcode) {
 		if (b) {
 			data = bus_read8(cpu->bus, addr);
 		} else {
-			data = bus_read32(cpu->bus, addr);
+			data = cpu_ldr32(cpu, addr);
 		}
 		cpu->regs[rd] = data;
 
@@ -790,12 +792,8 @@ void op_arm_transreg9(CPU *cpu, uint32_t opcode) {
 		}
 	}
 
-	if ((!p || w) && rn != 15) {
-		if (p) {
-			cpu->regs[rn] = addr;
-		} else {
-			cpu->regs[rn] = base + effective_offset;
-		}
+	if ((!p || w) && rn != 15 && !(l && rd == rn)) {
+		cpu->regs[rn] = p ? addr : (base + effective_offset);
 	}
 }
 
@@ -873,6 +871,10 @@ void op_arm_blocktrans(CPU *cpu, uint32_t opcode) {
 		if (pre_return_mode != cpu->mode) {
 			swap_banked_registers(cpu, pre_return_mode, cpu->mode);
 		}
+	}
+
+	if (l && (rlist & 0x8000)) {
+		cpu->pc += (cpu->t ? 2 : 4);
 	}
 }
 
@@ -1235,7 +1237,7 @@ void op_thumb_trans_reg(CPU *cpu, uint16_t opcode) {
 			if (b) {
 				cpu->regs[rd] = bus_read8(cpu->bus, addr);
 			} else {
-				cpu->regs[rd] = bus_read32(cpu->bus, addr);
+				cpu->regs[rd] = cpu_ldr32(cpu, addr);
 			}
 		} else {
 			if (b) {
@@ -1256,10 +1258,13 @@ void op_thumb_trans_reg(CPU *cpu, uint16_t opcode) {
 				}
 				break;
 			case 2: {
-					uint32_t data = bus_read16(cpu->bus, addr);
-					cpu->regs[rd] = data;
+				uint32_t data = bus_read16(cpu->bus, addr);
+				if (addr & 1) {
+					data = (data >> 8) | (data << 24);
 				}
-				break;
+				cpu->regs[rd] = data;
+			}
+			break;
 			case 3: {
 					uint32_t data;
 					if (addr & 1) {
@@ -1289,7 +1294,7 @@ void op_thumb_trans_imm(CPU *cpu, uint16_t opcode) {
 		if (b) {
 			cpu->regs[rd] = bus_read8(cpu->bus, addr);
 		} else {
-			cpu->regs[rd] = bus_read32(cpu->bus, addr);
+			cpu->regs[rd] = cpu_ldr32(cpu, addr);
 		}
 	} else {
 		if (b) {
@@ -1327,7 +1332,7 @@ void op_thumb_trans_sp(CPU *cpu, uint16_t opcode) {
 	uint32_t addr = cpu->sp + offset;
 
 	if (l) {
-		cpu->regs[rd] = bus_read32(cpu->bus, addr);
+		cpu->regs[rd] = cpu_ldr32(cpu, addr);
 	} else {
 		bus_write32(cpu->bus, addr, cpu->regs[rd]);
 	}
