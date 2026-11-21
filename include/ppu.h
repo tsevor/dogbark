@@ -4,11 +4,82 @@
 #include <stdbool.h>
 
 typedef struct PPU {
-	uint8_t pram[0x400];
+	union {
+		uint8_t pram[0x400];
+		uint16_t colors[0x200];
+	};
 	uint8_t vram[0x18000];
-	uint8_t oam[0x400];
+	union {
+		uint8_t oam[0x400];
+		struct {
+			// attr 0
+			uint16_t y : 8;
+			uint16_t affine : 1;
+			uint16_t db_dis : 1;
+			uint16_t mode : 2;
+			uint16_t mosaic : 1;
+			uint16_t pal_m : 1;
+			uint16_t shape : 2;
+			// attr 1
+			union {
+				struct {
+					uint16_t x : 9;
+					uint16_t param : 5;
+					uint16_t size : 2;
+				};
+				struct {
+					uint16_t : 12; // x : 9 + unused : 3
+					uint16_t hflip : 1;
+					uint16_t vflip : 1;
+					uint16_t : 2;  // size
+				};
+			};
+			// attr 2
+			uint16_t tile : 10;
+			uint16_t prio : 2;
+			uint16_t pal : 4;
+			// affine param
+			uint16_t : 16;
+		} sprites[128];
+		struct {
+			uint16_t : 16;
+			uint16_t : 16;
+			uint16_t : 16;
+			int16_t pa;
+			uint16_t : 16;
+			uint16_t : 16;
+			uint16_t : 16;
+			int16_t pb;
+			uint16_t : 16;
+			uint16_t : 16;
+			uint16_t : 16;
+			int16_t pc;
+			uint16_t : 16;
+			uint16_t : 16;
+			uint16_t : 16;
+			int16_t pd;
+		} affine_params[32];
+	};
 
-	uint16_t dispcnt;
+	union {
+		uint16_t dispcnt;
+		struct {
+			uint16_t bg_mode : 3;
+			uint16_t : 1; // reserved
+			uint16_t frame_sel : 1;
+			uint16_t hblank_oam : 1;
+			uint16_t obj_vram_d : 1;
+			uint16_t fblank : 1;
+			uint16_t en_bg0 : 1;
+			uint16_t en_bg1 : 1;
+			uint16_t en_bg2 : 1;
+			uint16_t en_bg3 : 1;
+			uint16_t en_obj : 1;
+			uint16_t en_win0 : 1;
+			uint16_t en_win1 : 1;
+			uint16_t en_wino : 1;
+		};
+	};
 	uint16_t dispstat;
 	uint16_t vcount;
 

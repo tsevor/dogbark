@@ -744,16 +744,16 @@ void op_arm_transreg9(CPU *cpu, uint32_t opcode) {
 	uint32_t offset;
 
 	switch (type) {
-		case 0: // LSL
+		case 0: // lsl
 			offset = (shift == 0) ? val : (val << shift);
 			break;
-		case 1: // LSR
+		case 1: // lsr
 			offset = (shift == 0) ? 0 : (val >> shift);
 			break;
-		case 2: // ASR
+		case 2: // asr
 			offset = (shift == 0) ? (((int32_t)val < 0) ? 0xffffffff : 0) : (uint32_t)((int32_t)val >> shift);
 			break;
-		case 3: // ROR / RRX
+		case 3: // ror / rrx
 			offset = (shift == 0) ? ((val >> 1) | ((uint32_t)cpu->c << 31)) : ror(val, shift);
 			break;
 	}
