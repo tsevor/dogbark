@@ -50,6 +50,14 @@ void bus_clock(Bus *bus) {
 		bus->ppu->irq_vblank = false;
 		bus->io_if |= (1 << 0);
 	}
+	if (bus->ppu->irq_hblank) {
+		bus->ppu->irq_hblank = false;
+		bus->io_if |= (1 << 1);
+	}
+	if (bus->ppu->irq_vcount) {
+		bus->ppu->irq_vcount = false;
+		bus->io_if |= (1 << 2);
+	}
 
 	if (bus->keycnt & (1 << 14)) {
 		uint16_t mask = bus->keycnt & 0x03ff;
@@ -118,6 +126,9 @@ uint8_t bus_read8(Bus *bus, uint32_t addr) {
 		case 0x07:
 			return bus->ppu->oam[addr & 0x3ff];
 		case 0x08 ... 0x0d: {
+			if (region == 0x0d && bus->cart->save_type == SAVE_EEPROM) {
+				return cart_eeprom_read(bus->cart);
+			}
 			uint32_t rom_addr = addr & 0x01ffffff;
 			if (rom_addr < bus->cart->rom_size) return bus->cart->rom[rom_addr];
 			return 0;
@@ -179,6 +190,10 @@ uint16_t bus_read16(Bus *bus, uint32_t addr) {
 			val = *(uint16_t*)(bus->ppu->oam + (aligned & 0x3ff));
 			break;
 		case 0x08 ... 0x0d: {
+			if (region == 0x0d && bus->cart->save_type == SAVE_EEPROM) {
+				val = cart_eeprom_read(bus->cart);
+				return val;
+			}
 			uint32_t rom_addr = aligned & 0x01ffffff;
 			if (rom_addr + 1 < bus->cart->rom_size) val = *(uint16_t*)(bus->cart->rom + rom_addr);
 			break;
@@ -240,6 +255,9 @@ uint32_t bus_read32(Bus *bus, uint32_t addr) {
 			val = *(uint32_t*)(bus->ppu->oam + (aligned & 0x3ff));
 			break;
 		case 0x08 ... 0x0d: {
+			if (region == 0x0d && bus->cart->save_type == SAVE_EEPROM) {
+				return cart_eeprom_read(bus->cart);
+			}
 			uint32_t rom_addr = aligned & 0x01ffffff;
 			if (rom_addr + 3 < bus->cart->rom_size) val = *(uint32_t*)(bus->cart->rom + rom_addr);
 			break;
@@ -307,6 +325,11 @@ void bus_write8(Bus *bus, uint32_t addr, uint8_t val) {
 		}
 		case 0x07:
 			break;
+		case 0x0d:
+			if (bus->cart->save_type == SAVE_EEPROM) {
+				cart_eeprom_write(bus->cart, val);
+			}
+			break;
 		case 0x0e: case 0x0f:
 			cart_write(bus->cart, addr, val);
 			break;
@@ -359,9 +382,16 @@ void bus_write16(Bus *bus, uint32_t addr, uint16_t val) {
 		case 0x07:
 			*(uint16_t*)(bus->ppu->oam + (aligned & 0x3ff)) = val;
 			break;
-		case 0x0e: case 0x0f:
-			cart_write(bus->cart, addr, (uint8_t)val);
+		case 0x0d:
+			if (bus->cart->save_type == SAVE_EEPROM) {
+				cart_eeprom_write(bus->cart, (uint8_t)val);
+			}
 			break;
+		case 0x0e: case 0x0f: {
+			uint8_t b = (addr & 1) ? (uint8_t)(val >> 8) : (uint8_t)(val & 0xff);
+			cart_write(bus->cart, addr, b);
+			break;
+		}
 		default:
 			break;
 	}
@@ -414,9 +444,16 @@ void bus_write32(Bus *bus, uint32_t addr, uint32_t val) {
 		case 0x07:
 			*(uint32_t*)(bus->ppu->oam + (aligned & 0x3ff)) = val;
 			break;
-		case 0x0e: case 0x0f:
-			cart_write(bus->cart, addr, (uint8_t)val);
+		case 0x0d:
+			if (bus->cart->save_type == SAVE_EEPROM) {
+				cart_eeprom_write(bus->cart, (uint8_t)val);
+			}
 			break;
+		case 0x0e: case 0x0f: {
+			uint8_t b = (uint8_t)(val >> ((addr & 3) * 8));
+			cart_write(bus->cart, addr, b);
+			break;
+		}
 		default:
 			break;
 	}

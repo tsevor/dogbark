@@ -30,6 +30,8 @@ static void dma_run_channel(DMA *dma, int ch_id) {
 	sad_mask &= is_32 ? 0xfffffffc : 0xfffffffe;
 	dad_mask &= is_32 ? 0xfffffffc : 0xfffffffe;
 
+	dma->bus->cart->dma_count = count;
+
 	for (uint32_t i = 0; i < count; i++) {
 		if (is_32) {
 			uint32_t val = bus_read32(dma->bus, ch->current_sad & sad_mask);
@@ -45,6 +47,8 @@ static void dma_run_channel(DMA *dma, int ch_id) {
 		if (dst_ctl == 0 || dst_ctl == 3) ch->current_dad += step;
 		else if (dst_ctl == 1) ch->current_dad -= step;
 	}
+
+	dma->bus->cart->dma_count = 0;
 
 	if (ch->cnt_h & (1 << 14)) {
 		dma->bus->io_if |= (1 << (8 + ch_id));

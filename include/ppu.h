@@ -110,12 +110,57 @@ typedef struct PPU {
 	int32_t bg_ref_x[2];
 	int32_t bg_ref_y[2];
 
+	uint16_t win0h;
+	uint16_t win1h;
+	uint16_t win0v;
+	uint16_t win1v;
+	uint16_t winin;
+	uint16_t winout;
+
+	union {
+		uint16_t bldcnt;
+		struct {
+			uint16_t bg0t1  : 1;
+			uint16_t bg1t1  : 1;
+			uint16_t bg2t1  : 1;
+			uint16_t bg3t1  : 1;
+			uint16_t objt1  : 1;
+			uint16_t bbt1   : 1;
+			uint16_t effect : 2;
+			uint16_t bg0t2  : 1;
+			uint16_t bg1t2  : 1;
+			uint16_t bg2t2  : 1;
+			uint16_t bg3t2  : 1;
+			uint16_t objt2  : 1;
+			uint16_t bdt2   : 1;
+			uint16_t : 2;
+		};
+	};
+	union {
+		uint16_t bldalpha;
+		struct {
+			uint16_t eva : 5;
+			uint16_t : 3;
+			uint16_t evb : 5;
+			uint16_t : 3;
+		};
+	};
+	union {
+		uint16_t bldy;
+		struct {
+			uint16_t evy : 5;
+			uint16_t : 11;
+		};
+	};
+
 	uint16_t vcount;
 
 	uint32_t scanline_cycles;
 	bool hblank_started;
 	bool vblank_started;
 	bool irq_vblank;
+	bool irq_hblank;
+	bool irq_vcount;
 } PPU;
 
 void ppu_init(PPU *ppu);

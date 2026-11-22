@@ -415,10 +415,21 @@ static inline uint32_t cpu_ldr32(CPU *cpu, uint32_t addr) {
 }
 
 void op_arm_transswp12(CPU *cpu, uint32_t opcode) {
-	(void)cpu;
-	(void)opcode;
-	lerror("op_arm_transswp12 is unimplemented\n");
-	exit(1);
+	bool is_byte = (opcode >> 22) & 1;
+	uint8_t rn = (opcode >> 16) & 0x0f;
+	uint8_t rd = (opcode >> 12) & 0x0f;
+	uint8_t rm = opcode & 0x0f;
+
+	uint32_t addr = cpu->regs[rn];
+	if (is_byte) {
+		uint8_t val = bus_read8(cpu->bus, addr);
+		bus_write8(cpu->bus, addr, (uint8_t)cpu->regs[rm]);
+		cpu->regs[rd] = val;
+	} else {
+		uint32_t val = cpu_ldr32(cpu, addr);
+		bus_write32(cpu->bus, addr & ~3, cpu->regs[rm]);
+		cpu->regs[rd] = val;
+	}
 }
 
 void op_arm_mullong(CPU *cpu, uint32_t opcode) {
@@ -885,11 +896,23 @@ void op_arm_bbl(CPU *cpu, uint32_t opcode) {
 	cpu->pc += 4 + (offset << 2);
 }
 
+void cpu_undefined_instruction(CPU *cpu, bool thumb) {
+	uint32_t return_addr = thumb ? (cpu->pc - 2) : (cpu->pc - 4);
+
+	OperatingMode old_mode = cpu->mode;
+	swap_banked_registers(cpu, old_mode, OPMODE_UND);
+	cpu->spsr = cpu->cpsr;
+	cpu->mode = OPMODE_UND;
+	cpu->i = 1;
+	cpu->t = 0;
+
+	cpu->lr = return_addr;
+	cpu->pc = 0x00000004 + 4;
+}
+
 void op_arm_codatatrans(CPU *cpu, uint32_t opcode) {
-	(void)cpu;
 	(void)opcode;
-	lerror("op_arm_codatatrans is unimplemented\n");
-	exit(1);
+	cpu_undefined_instruction(cpu, false);
 }
 
 void op_arm_swi(CPU *cpu, uint32_t opcode) {
@@ -908,23 +931,36 @@ void op_arm_swi(CPU *cpu, uint32_t opcode) {
 }
 
 void op_arm_coregtrans(CPU *cpu, uint32_t opcode) {
-	(void)cpu;
-	(void)opcode;
-	lerror("op_arm_coregtrans is unimplemented\n");
-	exit(1);
+	uint8_t cp = (opcode >> 8) & 0x0f;
+	if (cp != 14) {
+		cpu_undefined_instruction(cpu, false);
+		return;
+	}
+
+	bool load = (opcode >> 20) & 1;
+	uint8_t rd = (opcode >> 12) & 0x0f;
+
+	if (load) {
+		uint32_t val = 0;
+		if (rd == 15) {
+			cpu->n = (val >> 31) & 1;
+			cpu->z = (val >> 30) & 1;
+			cpu->c = (val >> 29) & 1;
+			cpu->v = (val >> 28) & 1;
+		} else {
+			cpu->regs[rd] = val;
+		}
+	}
 }
 
 void op_arm_codataop(CPU *cpu, uint32_t opcode) {
-	(void)cpu;
 	(void)opcode;
-	lerror("op_arm_codataop is unimplemented\n");
-	exit(1);
+	cpu_undefined_instruction(cpu, false);
 }
 
 void op_arm_undefined(CPU *cpu, uint32_t opcode) {
-	lwarn("cpu: hit undefined opcode: 0x%08x\n", opcode);
-	(void)cpu;
-	exit(1);
+	(void)opcode;
+	cpu_undefined_instruction(cpu, false);
 }
 
 void cpu_exec_arm(CPU *cpu) {
@@ -1522,7 +1558,7 @@ void cpu_exec_thumb(CPU *cpu) {
 			} else if ((opcode & 0xf600) == 0xb400) {
 				op_thumb_push_pop(cpu, opcode);
 			} else {
-				lwarn("cpu: undefined thumb opcode: 0x%04x\n", opcode);
+				cpu_undefined_instruction(cpu, true);
 			}
 			break;
 		case 0x30 ... 0x33:
@@ -1539,7 +1575,7 @@ void cpu_exec_thumb(CPU *cpu) {
 			op_thumb_branch(cpu, opcode);
 			break;
 		case 0x3a ... 0x3b:
-			lwarn("cpu: undefined thumb opcode: 0x%04x\n", opcode);
+			cpu_undefined_instruction(cpu, true);
 			break;
 		case 0x3c ... 0x3f:
 			op_thumb_branch_link(cpu, opcode);
